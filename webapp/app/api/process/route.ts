@@ -16,13 +16,41 @@ import type {
   ResearchBrief,
   EmailDraft,
   AngleCategory,
+  ModelTier,
 } from "@/lib/types";
 
 export const maxDuration = 60;
 
+// --- Model resolution ---
+
+const MODELS = {
+  sonnet: "claude-sonnet-4-20250514",
+  opus: "claude-opus-4-20250514",
+} as const;
+
+function resolveModel(tier: ModelTier, phase: "enrich" | "research" | "email", context?: {
+  identityConfidence?: number;
+  researchConfidence?: number;
+  highPriority?: boolean;
+}): string {
+  if (tier === "sonnet") return MODELS.sonnet;
+  if (tier === "opus") return MODELS.opus;
+
+  // auto: Sonnet by default, Opus only when justified
+  if (phase === "email" && context) {
+    const shouldEscalate =
+      context.highPriority ||
+      (context.identityConfidence !== undefined && context.identityConfidence < 0.5) ||
+      (context.researchConfidence !== undefined && context.researchConfidence < 0.5);
+    if (shouldEscalate) return MODELS.opus;
+  }
+  return MODELS.sonnet;
+}
+
+// --- Helpers ---
+
 function parseJSON(raw: string): Record<string, unknown> | null {
   let text = raw.trim();
-  // Strip markdown code fences
   if (text.startsWith("```")) {
     const lines = text.split("\n");
     text = lines.filter((l) => !l.trim().startsWith("```")).join("\n");
@@ -30,7 +58,6 @@ function parseJSON(raw: string): Record<string, unknown> | null {
   try {
     return JSON.parse(text);
   } catch {
-    // Try to find JSON object in the response
     const match = text.match(/\{[\s\S]*\}/);
     if (match) {
       try {
@@ -45,12 +72,14 @@ function parseJSON(raw: string): Record<string, unknown> | null {
 
 async function callClaude(
   client: Anthropic,
+  model: string,
   system: string,
-  user: string
+  user: string,
+  maxTokens: number
 ): Promise<string> {
   const resp = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 1500,
+    model,
+    max_tokens: maxTokens,
     system,
     messages: [{ role: "user", content: user }],
   });
@@ -76,6 +105,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const sparse: SparseInput = body.input;
     const previousAngles: string[] = body.previousAngles || [];
+    const tier: ModelTier = body.modelTier || process.env.MODEL_TIER || "sonnet";
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
@@ -91,11 +121,14 @@ export async function POST(request: NextRequest) {
     const queries = generateSearchQueries(sparse);
     const searchResults = await doSearch(queries);
 
-    // --- Phase 2: Enrich ---
+    // --- Phase 2: Enrich (Sonnet, 800 tokens) ---
+    const enrichModel = resolveModel(tier, "enrich");
     const enrichRaw = await callClaude(
       client,
+      enrichModel,
       ENRICHMENT_SYSTEM,
-      enrichmentUserPrompt(sparse, searchResults)
+      enrichmentUserPrompt(sparse, searchResults),
+      800
     );
 
     const enrichData = parseJSON(enrichRaw);
@@ -113,8 +146,7 @@ export async function POST(request: NextRequest) {
     const identityConfidence = Number(enrichData?.identity_confidence ?? 0.5);
     const ambiguityNote = (enrichData?.ambiguity_note as string) || "";
 
-    // --- Phase 3: Research ---
-    // Run additional search with enriched info
+    // --- Phase 3: Research (Sonnet, 800 tokens) ---
     const researchQueries: string[] = [];
     if (contact.company) {
       researchQueries.push(`"${contact.full_name}" "${contact.company}"`);
@@ -132,15 +164,16 @@ export async function POST(request: NextRequest) {
       researchQueries.push(`"${contact.company}" recent news OR announcements`);
     }
 
-    const researchSearchResults = await doSearch(
-      researchQueries.slice(0, 5)
-    );
+    const researchSearchResults = await doSearch(researchQueries.slice(0, 5));
     const allSearchResults = searchResults + "\n" + researchSearchResults;
 
+    const researchModel = resolveModel(tier, "research");
     const researchRaw = await callClaude(
       client,
+      researchModel,
       RESEARCH_SYSTEM,
-      researchUserPrompt(contact, allSearchResults)
+      researchUserPrompt(contact, allSearchResults),
+      800
     );
 
     const researchData = parseJSON(researchRaw);
@@ -155,10 +188,19 @@ export async function POST(request: NextRequest) {
     };
 
     // --- Phase 4: Generate email ---
+    // In auto mode, escalate to Opus only when confidence is low or high-priority
+    const emailModel = resolveModel(tier, "email", {
+      identityConfidence,
+      researchConfidence: brief.confidence_score,
+      highPriority: sparse.highPriority,
+    });
+
     const emailRaw = await callClaude(
       client,
+      emailModel,
       EMAIL_SYSTEM,
-      emailUserPrompt(contact, brief, previousAngles)
+      emailUserPrompt(contact, brief, previousAngles),
+      600
     );
 
     const emailData = parseJSON(emailRaw);
@@ -193,6 +235,7 @@ export async function POST(request: NextRequest) {
       identity_confidence: identityConfidence,
       flagged,
       warning: warning.trim(),
+      model_used: emailModel,
     });
   } catch (e) {
     console.error("Process error:", e);

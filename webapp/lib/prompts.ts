@@ -5,133 +5,73 @@ import type { AngleCategory, SparseInput, Contact, ResearchBrief } from "./types
 // Enrichment: sparse input -> full contact
 // ---------------------------------------------------------------------------
 
-export const ENRICHMENT_SYSTEM = `You are an identity resolution and enrichment assistant. Given sparse information about a person (a name plus one or two identifiers), determine who they are and fill in their professional profile using ONLY the search results provided.
-
-RULES:
-- Only output facts clearly supported by the search results.
-- If you cannot confidently determine something, leave it blank.
-- Never invent or guess information.
-- If multiple people match, pick the most prominent/likely match and note the ambiguity.
-- Return valid JSON only.`;
+export const ENRICHMENT_SYSTEM = `You are an identity resolution assistant. Given sparse info about a person, determine who they are using ONLY the search results provided. Never invent information. If uncertain, leave fields blank. Return valid JSON only.`;
 
 export function enrichmentUserPrompt(
   sparse: SparseInput,
   searchResults: string
 ): string {
-  return `I have sparse information about someone. Please identify them and enrich their profile using the search results below.
+  // Only include fields that have actual data — saves tokens
+  const known: string[] = [`- Name: ${sparse.name}`];
+  if (sparse.email) known.push(`- Email: ${sparse.email}`);
+  if (sparse.linkedin) known.push(`- LinkedIn: ${sparse.linkedin}`);
+  if (sparse.company) known.push(`- Company: ${sparse.company}`);
+  if (sparse.website) known.push(`- Website: ${sparse.website}`);
+  if (sparse.twitter) known.push(`- Twitter/X: ${sparse.twitter}`);
+  if (sparse.notes) known.push(`- Notes: ${sparse.notes}`);
 
-KNOWN INFORMATION:
-- Name: ${sparse.name}
-- Email: ${sparse.email || "not provided"}
-- LinkedIn: ${sparse.linkedin || "not provided"}
-- Company: ${sparse.company || "not provided"}
-- Website: ${sparse.website || "not provided"}
-- Twitter/X: ${sparse.twitter || "not provided"}
-- Notes: ${sparse.notes || "none"}
+  return `Identify and enrich this person's profile using ONLY the search results below.
 
-SEARCH RESULTS:
+KNOWN:
+${known.join("\n")}
+
 <search_results>
 ${searchResults}
 </search_results>
 
-Based ONLY on the search results, return a JSON object:
-{
-  "full_name": "Their full name as commonly known",
-  "company": "Current company or organization",
-  "role": "Current role or title",
-  "website": "Personal or company website if found",
-  "linkedin": "LinkedIn URL if found",
-  "twitter": "Twitter/X URL if found",
-  "bio_summary": "1-2 sentence summary of who they are",
-  "identity_confidence": 0.0 to 1.0,
-  "ambiguity_note": "Any notes about identity uncertainty, or empty string"
-}
-
-If the search results are empty or unhelpful, still return the JSON with what you know and set identity_confidence accordingly.`;
+Return JSON:
+{"full_name":"","company":"","role":"","website":"","linkedin":"","twitter":"","bio_summary":"1-2 sentences","identity_confidence":0.0-1.0,"ambiguity_note":""}`;
 }
 
 // ---------------------------------------------------------------------------
 // Research: contact -> research brief
 // ---------------------------------------------------------------------------
 
-export const RESEARCH_SYSTEM = `You are a research assistant. Analyze raw web search results about a person and produce a structured research brief.
-
-RULES:
-- Only include facts clearly supported by the search results provided.
-- If a fact is ambiguous or uncertain, omit it entirely.
-- Never invent, hallucinate, or speculate about the person.
-- Be specific: names of companies, projects, publications, investment rounds, etc.
-- Focus on what makes this person distinctive and interesting.`;
+export const RESEARCH_SYSTEM = `You are a research assistant. Produce a structured brief from search results. Only include facts clearly supported by the results. Never invent or speculate. Be specific: company names, projects, publications, rounds.`;
 
 export function researchUserPrompt(
   contact: Contact,
   searchResults: string
 ): string {
-  const facetLines = Object.entries(SENDER.background_facets)
-    .map(([k, v]) => `  - ${k}: ${v}`)
-    .join("\n");
+  // Only include non-empty contact fields
+  const info: string[] = [`Name: ${contact.full_name}`];
+  if (contact.company) info.push(`Company: ${contact.company}`);
+  if (contact.role) info.push(`Role: ${contact.role}`);
+  if (contact.website) info.push(`Website: ${contact.website}`);
+  if (contact.linkedin) info.push(`LinkedIn: ${contact.linkedin}`);
+  if (contact.twitter) info.push(`Twitter/X: ${contact.twitter}`);
+  if (contact.notes) info.push(`Notes: ${contact.notes}`);
 
-  return `I need a research brief on the following person:
+  const facetKeys = Object.keys(SENDER.background_facets).join(" | ");
 
-Name: ${contact.full_name}
-Company: ${contact.company}
-Role: ${contact.role}
-Website: ${contact.website}
-LinkedIn: ${contact.linkedin}
-Twitter/X: ${contact.twitter}
-Notes: ${contact.notes}
-
-Here are the raw search results:
+  return `Research brief for:
+${info.join("\n")}
 
 <search_results>
 ${searchResults}
 </search_results>
 
-Based ONLY on the search results above, produce a research brief in this JSON format:
+Return JSON with ONLY verified facts:
+{"specific_facts":["fact1","fact2","fact3 or INSUFFICIENT DATA"],"plausible_reasons":["reason1","reason2"],"recommended_angle":"one sentence","background_emphasis":"${facetKeys}","confidence_score":0.0-1.0}
 
-{
-  "specific_facts": [
-    "Fact 1 — something concrete they built, wrote, invested in, or achieved",
-    "Fact 2 — another specific, verifiable fact",
-    "Fact 3 — a third specific fact (or 'INSUFFICIENT DATA' if not enough info)"
-  ],
-  "plausible_reasons": [
-    "Reason 1 — why the sender is a plausible person to reach out",
-    "Reason 2 — a second reason"
-  ],
-  "recommended_angle": "One sentence describing the best angle for outreach",
-  "background_emphasis": "One of: aviation_engineering | investing_economic_development | global_infrastructure_china | ai_tools_technical_initiative | builder_ambition_intellectual",
-  "confidence_score": 0.0 to 1.0,
-  "key_themes": ["theme1", "theme2"]
-}
-
-About the sender (for context on plausible reasons):
-- Name: ${SENDER.name}
-- Role: ${SENDER.current_role} at ${SENDER.company}
-- Education: ${SENDER.education}
-- Background facets:
-${facetLines}
-
-Choose the background_emphasis that best aligns with this recipient's world. The confidence_score should reflect how much verifiable information you found.`;
+Sender context: ${SENDER.name}, ${SENDER.current_role} at ${SENDER.company}. ${SENDER.education}. Interests: aviation/airworthiness AI, investing/economic development, China infrastructure trip, building AI tools, intellectual ambition. Pick the background_emphasis that best fits this recipient's world.`;
 }
 
 // ---------------------------------------------------------------------------
 // Email generation: brief -> draft
 // ---------------------------------------------------------------------------
 
-export const EMAIL_SYSTEM = `You are a cold email ghostwriter. You write emails on behalf of the sender that are warm, sharp, polished, and human. Each email must feel individually crafted — never mass-produced.
-
-STRICT RULES:
-1. 3–5 sentences ONLY. No more.
-2. Mention 1–2 specific things the sender has done or is working on.
-3. Include credible, specific admiration for the recipient's work — tied to something concrete they built, wrote, invested in, researched, or said.
-4. End with a low-friction CTA (quick call, brief conversation, whenever convenient).
-5. NEVER use vague praise like "I admire your impressive background" or "Your work is inspiring."
-6. NEVER invent facts about the recipient or sender.
-7. NEVER use exclamation marks in the email body.
-8. Vary the sender's framing based on the angle — do not reuse the same intro.
-9. Sound human. No corporate jargon. No filler. No buzzwords.
-10. The email should make the recipient feel that the sender is paying close attention to them specifically.`;
+export const EMAIL_SYSTEM = `You ghostwrite cold emails: warm, sharp, polished, human. 3-5 sentences only. Specific praise tied to something concrete. Low-friction CTA. No vague praise, no exclamation marks, no jargon, no filler. Vary framing per recipient. Never invent facts.`;
 
 export function emailUserPrompt(
   contact: Contact,
@@ -144,53 +84,28 @@ export function emailUserPrompt(
     SENDER.background_facets.builder_ambition_intellectual;
 
   const facts = brief.specific_facts
-    .map((f, i) => `  ${i + 1}. ${f}`)
+    .map((f, i) => `${i + 1}. ${f}`)
     .join("\n");
 
   const prev =
     previousAngles.length > 0
-      ? previousAngles.map((a) => `  - ${a}`).join("\n")
-      : "  (none yet — this is the first email)";
-
-  const tone = SENDER.tone_guidelines.map((t) => `  - ${t}`).join("\n");
-  const anti = SENDER.anti_patterns.map((a) => `  - ${a}`).join("\n");
+      ? previousAngles.slice(-5).join("\n")
+      : "(first email)";
 
   const label = emphasis.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
-  return `Write a personalized cold email for the following recipient.
+  return `RECIPIENT: ${contact.full_name}, ${contact.role} at ${contact.company}
 
-RECIPIENT:
-- Name: ${contact.full_name}
-- Company: ${contact.company}
-- Role: ${contact.role}
-
-RESEARCH BRIEF:
-- Specific facts about them:
+FACTS:
 ${facts}
-- Recommended angle: ${brief.recommended_angle}
+Angle: ${brief.recommended_angle}
 
-SENDER:
-- Name: ${SENDER.name}
-- Background emphasis to use: ${label}
-- Details: ${emphasisDetail}
-- Education: ${SENDER.education}
-- Company: ${SENDER.company}
+SENDER: ${SENDER.name}, ${label}. ${emphasisDetail} ${SENDER.education}.
 
-PREVIOUS ANGLES USED (do NOT repeat these framings):
+DO NOT reuse these prior framings:
 ${prev}
 
-TONE:
-${tone}
+STYLE: ${SENDER.tone_guidelines.join(" ")} ${SENDER.anti_patterns.join(" ")}
 
-ANTI-PATTERNS (avoid these):
-${anti}
-
-Return your response as JSON:
-{
-  "subject_lines": ["Subject 1", "Subject 2", "Subject 3"],
-  "body": "The email body, 3-5 sentences.",
-  "sender_details_used": ["brief note on which sender details you emphasized"]
-}
-
-Write the email now. Remember: 3-5 sentences, specific praise, low-friction CTA, human tone.`;
+Return JSON: {"subject_lines":["s1","s2","s3"],"body":"3-5 sentences","sender_details_used":["what you emphasized"]}`;
 }

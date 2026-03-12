@@ -1,3 +1,5 @@
+export type ModelTier = "sonnet" | "opus" | "auto";
+
 export type AngleCategory =
   | "aviation_engineering"
   | "investing_economic_development"
@@ -21,6 +23,7 @@ export interface SparseInput {
   website?: string;
   twitter?: string;
   notes?: string;
+  highPriority?: boolean;
 }
 
 export interface Contact {
@@ -61,6 +64,7 @@ export interface ProcessedResult {
   review_status: "pending" | "accepted" | "skipped" | "uncertain";
   edited_body?: string;
   edited_angle?: AngleCategory;
+  model_used?: string;
 }
 
 export interface ExportRow {

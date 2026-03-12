@@ -1,19 +1,33 @@
 "use client";
 
 import { useState, useRef } from "react";
-import type { SparseInput } from "@/lib/types";
-import { parseSingleInput, parseCSVRows, normalizeColumnName } from "@/lib/parse-input";
+import type { SparseInput, ModelTier } from "@/lib/types";
+import { parseSingleInput, parseCSVRows } from "@/lib/parse-input";
 import Papa from "papaparse";
 
 interface Props {
   contacts: SparseInput[];
   setContacts: (c: SparseInput[]) => void;
+  modelTier: ModelTier;
+  setModelTier: (t: ModelTier) => void;
   onNext: () => void;
 }
 
 type Tab = "single" | "batch" | "upload";
 
-export default function InputStep({ contacts, setContacts, onNext }: Props) {
+const MODEL_OPTIONS: { value: ModelTier; label: string; desc: string }[] = [
+  { value: "sonnet", label: "Sonnet", desc: "Fast, cost-effective (default)" },
+  { value: "auto", label: "Auto", desc: "Sonnet + Opus for hard cases" },
+  { value: "opus", label: "Opus", desc: "Best quality, higher cost" },
+];
+
+export default function InputStep({
+  contacts,
+  setContacts,
+  modelTier,
+  setModelTier,
+  onNext,
+}: Props) {
   const [tab, setTab] = useState<Tab>("single");
   const [name, setName] = useState("");
   const [identifier, setIdentifier] = useState("");
@@ -62,12 +76,17 @@ export default function InputStep({ contacts, setContacts, onNext }: Props) {
       alert("Please upload a CSV file. XLSX support coming soon.");
     }
 
-    // Reset file input
     if (fileRef.current) fileRef.current.value = "";
   };
 
   const removeContact = (idx: number) => {
     setContacts(contacts.filter((_, i) => i !== idx));
+  };
+
+  const togglePriority = (idx: number) => {
+    const next = [...contacts];
+    next[idx] = { ...next[idx], highPriority: !next[idx].highPriority };
+    setContacts(next);
   };
 
   const detail = (s: SparseInput) =>
@@ -100,7 +119,7 @@ export default function InputStep({ contacts, setContacts, onNext }: Props) {
       {tab === "single" && (
         <div className="space-y-4">
           <p className="text-sm text-gray-500">
-            Enter a name and any one identifier. That's enough.
+            Enter a name and any one identifier. That&apos;s enough.
           </p>
           <div className="grid grid-cols-2 gap-4">
             <input
@@ -174,9 +193,7 @@ export default function InputStep({ contacts, setContacts, onNext }: Props) {
             onClick={() => fileRef.current?.click()}
             className="border-2 border-dashed border-gray-200 rounded-lg p-12 text-center cursor-pointer hover:border-gray-400 transition-colors"
           >
-            <p className="text-sm text-gray-500">
-              Click to upload CSV
-            </p>
+            <p className="text-sm text-gray-500">Click to upload CSV</p>
             <p className="text-xs text-gray-400 mt-1">or drag and drop</p>
           </div>
           <input
@@ -211,6 +228,21 @@ export default function InputStep({ contacts, setContacts, onNext }: Props) {
                 className="flex items-center justify-between py-2.5 px-4 bg-gray-50 rounded-lg"
               >
                 <div className="flex items-center gap-3 min-w-0">
+                  <button
+                    onClick={() => togglePriority(i)}
+                    title={
+                      s.highPriority
+                        ? "High priority (uses Opus in Auto mode)"
+                        : "Normal priority — click to mark high priority"
+                    }
+                    className={`text-sm flex-shrink-0 ${
+                      s.highPriority
+                        ? "text-amber-500"
+                        : "text-gray-200 hover:text-gray-400"
+                    }`}
+                  >
+                    &#9733;
+                  </button>
                   <span className="font-medium text-sm truncate">
                     {s.name}
                   </span>
@@ -229,18 +261,48 @@ export default function InputStep({ contacts, setContacts, onNext }: Props) {
                   onClick={() => removeContact(i)}
                   className="text-gray-300 hover:text-gray-500 text-lg leading-none ml-2 flex-shrink-0"
                 >
-                  ×
+                  &times;
                 </button>
               </div>
             ))}
           </div>
 
-          <button
-            onClick={onNext}
-            className="w-full mt-6 py-3.5 bg-gray-900 text-white rounded-lg text-sm font-semibold hover:bg-gray-800 transition-colors"
-          >
-            Research & Generate Emails
-          </button>
+          {/* Model selector + go button */}
+          <div className="mt-6 space-y-3">
+            <div className="flex items-center gap-3">
+              <label className="text-xs text-gray-500 flex-shrink-0">
+                Model:
+              </label>
+              <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5 flex-1">
+                {MODEL_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setModelTier(opt.value)}
+                    title={opt.desc}
+                    className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium transition-all ${
+                      modelTier === opt.value
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-500 hover:text-gray-700"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {modelTier === "auto" && (
+              <p className="text-xs text-gray-400">
+                Auto uses Sonnet by default. Opus only for starred contacts or
+                when confidence is low.
+              </p>
+            )}
+            <button
+              onClick={onNext}
+              className="w-full py-3.5 bg-gray-900 text-white rounded-lg text-sm font-semibold hover:bg-gray-800 transition-colors"
+            >
+              Research & Generate Emails
+            </button>
+          </div>
         </div>
       )}
     </div>

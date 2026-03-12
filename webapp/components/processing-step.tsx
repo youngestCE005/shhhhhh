@@ -1,15 +1,16 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import type { SparseInput, ProcessedResult } from "@/lib/types";
+import type { SparseInput, ProcessedResult, ModelTier } from "@/lib/types";
 
 interface Props {
   contacts: SparseInput[];
+  modelTier: ModelTier;
   onComplete: (results: ProcessedResult[]) => void;
   onBack: () => void;
 }
 
-export default function ProcessingStep({ contacts, onComplete, onBack }: Props) {
+export default function ProcessingStep({ contacts, modelTier, onComplete, onBack }: Props) {
   const [current, setCurrent] = useState(0);
   const [phase, setPhase] = useState("Searching...");
   const [results, setResults] = useState<ProcessedResult[]>([]);
@@ -35,6 +36,7 @@ export default function ProcessingStep({ contacts, onComplete, onBack }: Props) 
             body: JSON.stringify({
               input: contacts[i],
               previousAngles,
+              modelTier,
             }),
           });
 
@@ -56,6 +58,7 @@ export default function ProcessingStep({ contacts, onComplete, onBack }: Props) 
             flagged: data.flagged,
             warning: data.warning,
             review_status: "pending",
+            model_used: data.model_used,
           };
 
           allResults.push(result);

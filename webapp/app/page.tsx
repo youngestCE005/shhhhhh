@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { SparseInput, ProcessedResult } from "@/lib/types";
+import type { SparseInput, ProcessedResult, ModelTier } from "@/lib/types";
 import InputStep from "@/components/input-step";
 import ProcessingStep from "@/components/processing-step";
 import ReviewStep from "@/components/review-step";
@@ -20,6 +20,7 @@ export default function Home() {
   const [step, setStep] = useState<Step>("input");
   const [contacts, setContacts] = useState<SparseInput[]>([]);
   const [results, setResults] = useState<ProcessedResult[]>([]);
+  const [modelTier, setModelTier] = useState<ModelTier>("sonnet");
 
   const stepIdx = STEPS.findIndex((s) => s.key === step);
 
@@ -41,7 +42,6 @@ export default function Home() {
           <button
             key={s.key}
             onClick={() => {
-              // Allow going back but not forward past current
               if (i <= stepIdx) setStep(s.key);
             }}
             className={`text-sm font-medium transition-colors ${
@@ -62,12 +62,15 @@ export default function Home() {
         <InputStep
           contacts={contacts}
           setContacts={setContacts}
+          modelTier={modelTier}
+          setModelTier={setModelTier}
           onNext={() => setStep("processing")}
         />
       )}
       {step === "processing" && (
         <ProcessingStep
           contacts={contacts}
+          modelTier={modelTier}
           onComplete={(r) => {
             setResults(r);
             setStep("review");
