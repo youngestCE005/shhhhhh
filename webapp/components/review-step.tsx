@@ -133,7 +133,25 @@ function RecipientCard({
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          {r.debug?.mode && (
+            <span
+              className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                r.debug.mode === "search-grounded"
+                  ? "bg-emerald-50 text-emerald-700"
+                  : "bg-violet-50 text-violet-700"
+              }`}
+              title={
+                r.debug.mode === "search-grounded"
+                  ? `${r.debug.searchProvider} · ${r.debug.resultsFound} results`
+                  : "No search API — used model knowledge"
+              }
+            >
+              {r.debug.mode === "search-grounded"
+                ? `Search · ${r.debug.resultsFound}`
+                : "Knowledge"}
+            </span>
+          )}
           <span
             className={`text-xs font-medium px-2.5 py-1 rounded-full ${confColor}`}
           >

@@ -7,30 +7,27 @@ export const SENDER = {
   education: "Materials Engineering, McGill University (B.Eng., 2023–2027)",
   background_facets: {
     aviation_engineering:
-      "Currently building an internal AI tool for aviation airworthiness — applying new technology to serious operational safety problems in aviation.",
+      "Building an internal AI tool for aviation airworthiness — applying new tech to real safety problems in aviation.",
     investing_economic_development:
-      "Strong interests in investing, economic development, and systems thinking. Drawn to how capital, policy, and technology interact to build real prosperity.",
+      "Interested in investing, economic development, and how capital and technology interact to build real prosperity.",
     global_infrastructure_china:
-      "Heading to China soon with a team to examine infrastructure and technology on the ground — studying what is working at scale and bringing useful lessons back.",
+      "Heading to China soon with a team to study infrastructure and technology on the ground — what's working at scale and why.",
     ai_tools_technical_initiative:
-      "Building internal AI tools that solve real operational problems. Technically hands-on with a bias toward shipping working systems.",
+      "Building internal AI tools that solve real operational problems. Hands-on with a bias toward shipping.",
     builder_ambition_intellectual:
-      "Ambitious, high-agency builder with deep interests in aviation, engineering, investing, and technology. Intellectually serious and commercially aware.",
+      "Ambitious builder with interests in aviation, engineering, investing, and technology. Intellectually serious.",
   } as Record<AngleCategory, string>,
   tone_guidelines: [
-    "Polished, technically credible, commercially aware, intellectually serious.",
-    "Human, concise, high-signal.",
-    "Respectful and thoughtful — never needy, generic, or over-eager.",
-    "The reader should feel Kuzey is a smart, credible, high-potential person who is paying close attention to exceptional people.",
-    "Warm but sharp. Not sycophantic.",
+    "Sound like a sharp 21-year-old, not a consultant.",
+    "Concise. Warm. Credible. Understated.",
+    "Respectful but never needy or over-eager.",
+    "The reader should think: this person is paying attention.",
   ],
   anti_patterns: [
-    "Do not use vague praise: 'I admire your impressive background', 'Your work is inspiring'.",
-    "Do not sound mass-produced or AI-generated.",
-    "Do not invent facts about the recipient. Only use verified public information.",
-    "Do not use the same framing for every recipient.",
-    "Do not be over-eager or needy. No exclamation marks in the body.",
-    "Do not use filler words or corporate jargon.",
-    "Do not write more than 5 sentences.",
+    "No vague praise. No 'impressive background' or 'inspiring work'.",
+    "No AI-sounding language: remarkable, strategic foresight, leverage, ecosystem, landscape, trajectory, pivot, intersection.",
+    "No stacking abstract concepts in one sentence.",
+    "No exclamation marks. No corporate jargon. No filler.",
+    "No more than 5 sentences.",
   ],
 };

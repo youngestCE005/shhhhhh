@@ -65,6 +65,13 @@ export interface ProcessedResult {
   edited_body?: string;
   edited_angle?: AngleCategory;
   model_used?: string;
+  debug?: {
+    searchProvider: string;
+    queriesRun: number;
+    resultsFound: number;
+    searchFailed: boolean;
+    mode: "search-grounded" | "knowledge-assisted";
+  };
 }
 
 export interface ExportRow {

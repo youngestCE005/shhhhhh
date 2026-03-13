@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { webSearch } from "@/lib/search";
+import { webSearch, hasSearchConfigured, searchProviderName } from "@/lib/search";
+import type { SearchResult } from "@/lib/search";
 import {
-  ENRICHMENT_SYSTEM,
+  ENRICHMENT_SYSTEM_SEARCH,
+  ENRICHMENT_SYSTEM_KNOWLEDGE,
   enrichmentUserPrompt,
-  RESEARCH_SYSTEM,
+  RESEARCH_SYSTEM_SEARCH,
+  RESEARCH_SYSTEM_KNOWLEDGE,
   researchUserPrompt,
   EMAIL_SYSTEM,
   emailUserPrompt,
@@ -35,8 +38,6 @@ function resolveModel(tier: ModelTier, phase: "enrich" | "research" | "email", c
 }): string {
   if (tier === "sonnet") return MODELS.sonnet;
   if (tier === "opus") return MODELS.opus;
-
-  // auto: Sonnet by default, Opus only when justified
   if (phase === "email" && context) {
     const shouldEscalate =
       context.highPriority ||
@@ -87,17 +88,47 @@ async function callClaude(
   return block.type === "text" ? block.text : "";
 }
 
-async function doSearch(queries: string[]): Promise<string> {
-  const results: string[] = [];
-  for (const q of queries) {
-    try {
-      const r = await webSearch(q);
-      results.push(`--- Query: ${q} ---\n${r}\n`);
-    } catch (e) {
-      results.push(`--- Query: ${q} ---\n[Error: ${e}]\n`);
-    }
+interface SearchStats {
+  provider: string;
+  queriesRun: number;
+  totalResults: number;
+  hasRealResults: boolean;
+  errors: string[];
+}
+
+async function doSearch(queries: string[]): Promise<{ text: string; stats: SearchStats }> {
+  const stats: SearchStats = {
+    provider: searchProviderName(),
+    queriesRun: queries.length,
+    totalResults: 0,
+    hasRealResults: false,
+    errors: [],
+  };
+
+  // Skip search entirely if no provider configured
+  if (!hasSearchConfigured()) {
+    console.log(`[search] No search API configured. Skipping ${queries.length} queries.`);
+    return { text: "", stats };
   }
-  return results.join("\n");
+
+  const textParts: string[] = [];
+  for (const q of queries) {
+    const result: SearchResult = await webSearch(q);
+    if (result.error) {
+      stats.errors.push(`${q}: ${result.error}`);
+      console.log(`[search] ERROR query="${q}" error="${result.error}"`);
+    } else if (result.hasRealResults) {
+      stats.hasRealResults = true;
+      stats.totalResults += result.resultCount;
+      textParts.push(`--- Query: ${q} ---\n${result.text}\n`);
+      console.log(`[search] OK query="${q}" results=${result.resultCount}`);
+    } else {
+      console.log(`[search] EMPTY query="${q}"`);
+    }
+    stats.provider = result.provider;
+  }
+
+  return { text: textParts.join("\n"), stats };
 }
 
 export async function POST(request: NextRequest) {
@@ -116,18 +147,24 @@ export async function POST(request: NextRequest) {
     }
 
     const client = new Anthropic({ apiKey });
+    console.log(`\n[process] Starting: "${sparse.name}" (tier=${tier})`);
 
     // --- Phase 1: Search ---
     const queries = generateSearchQueries(sparse);
-    const searchResults = await doSearch(queries);
+    const { text: searchResults, stats: searchStats } = await doSearch(queries);
+    const hasSearch = searchStats.hasRealResults;
+    const mode = hasSearch ? "search-grounded" : "knowledge-assisted";
 
-    // --- Phase 2: Enrich (Sonnet, 800 tokens) ---
+    console.log(`[search] Summary: provider=${searchStats.provider} queries=${searchStats.queriesRun} results=${searchStats.totalResults} mode=${mode}`);
+
+    // --- Phase 2: Enrich ---
     const enrichModel = resolveModel(tier, "enrich");
+    const enrichSystem = hasSearch ? ENRICHMENT_SYSTEM_SEARCH : ENRICHMENT_SYSTEM_KNOWLEDGE;
     const enrichRaw = await callClaude(
       client,
       enrichModel,
-      ENRICHMENT_SYSTEM,
-      enrichmentUserPrompt(sparse, searchResults),
+      enrichSystem,
+      enrichmentUserPrompt(sparse, searchResults, hasSearch),
       800
     );
 
@@ -146,33 +183,52 @@ export async function POST(request: NextRequest) {
     const identityConfidence = Number(enrichData?.identity_confidence ?? 0.5);
     const ambiguityNote = (enrichData?.ambiguity_note as string) || "";
 
-    // --- Phase 3: Research (Sonnet, 800 tokens) ---
-    const researchQueries: string[] = [];
-    if (contact.company) {
-      researchQueries.push(`"${contact.full_name}" "${contact.company}"`);
-    }
-    if (contact.role) {
-      researchQueries.push(`"${contact.full_name}" ${contact.role}`);
-    }
-    researchQueries.push(
-      `"${contact.full_name}" interview OR podcast OR essay OR talk`
-    );
-    researchQueries.push(
-      `"${contact.full_name}" recent projects OR investments OR research`
-    );
-    if (contact.company) {
-      researchQueries.push(`"${contact.company}" recent news OR announcements`);
-    }
+    console.log(`[enrich] model=${enrichModel} identity_confidence=${identityConfidence} name="${contact.full_name}" role="${contact.role}" company="${contact.company}"`);
 
-    const researchSearchResults = await doSearch(researchQueries.slice(0, 5));
-    const allSearchResults = searchResults + "\n" + researchSearchResults;
+    // --- Phase 3: Research ---
+    // Run additional search with enriched info (only if search is available)
+    let allSearchResults = searchResults;
+    let researchStats = searchStats;
+
+    if (hasSearchConfigured()) {
+      const researchQueries: string[] = [];
+      if (contact.company) {
+        researchQueries.push(`"${contact.full_name}" "${contact.company}"`);
+      }
+      if (contact.role) {
+        researchQueries.push(`"${contact.full_name}" ${contact.role}`);
+      }
+      researchQueries.push(
+        `"${contact.full_name}" interview OR podcast OR essay OR talk`
+      );
+      researchQueries.push(
+        `"${contact.full_name}" recent projects OR investments OR research`
+      );
+      if (contact.company) {
+        researchQueries.push(`"${contact.company}" recent news OR announcements`);
+      }
+
+      const { text: moreResults, stats: moreStats } = await doSearch(researchQueries.slice(0, 5));
+      if (moreResults) {
+        allSearchResults = searchResults + "\n" + moreResults;
+      }
+      // Merge stats
+      researchStats = {
+        ...searchStats,
+        queriesRun: searchStats.queriesRun + moreStats.queriesRun,
+        totalResults: searchStats.totalResults + moreStats.totalResults,
+        hasRealResults: searchStats.hasRealResults || moreStats.hasRealResults,
+        errors: [...searchStats.errors, ...moreStats.errors],
+      };
+    }
 
     const researchModel = resolveModel(tier, "research");
+    const researchSystem = hasSearch ? RESEARCH_SYSTEM_SEARCH : RESEARCH_SYSTEM_KNOWLEDGE;
     const researchRaw = await callClaude(
       client,
       researchModel,
-      RESEARCH_SYSTEM,
-      researchUserPrompt(contact, allSearchResults),
+      researchSystem,
+      researchUserPrompt(contact, allSearchResults, researchStats.hasRealResults),
       800
     );
 
@@ -187,8 +243,9 @@ export async function POST(request: NextRequest) {
       confidence_score: Number(researchData?.confidence_score ?? 0.3),
     };
 
+    console.log(`[research] model=${researchModel} confidence=${brief.confidence_score} facts=${brief.specific_facts.length} angle="${brief.background_emphasis}"`);
+
     // --- Phase 4: Generate email ---
-    // In auto mode, escalate to Opus only when confidence is low or high-priority
     const emailModel = resolveModel(tier, "email", {
       identityConfidence,
       researchConfidence: brief.confidence_score,
@@ -211,6 +268,8 @@ export async function POST(request: NextRequest) {
       sender_details_used: (emailData?.sender_details_used as string[]) || [],
     };
 
+    console.log(`[email] model=${emailModel} done for "${contact.full_name}"`);
+
     // --- Build flags ---
     let flagged = false;
     let warning = "";
@@ -226,6 +285,10 @@ export async function POST(request: NextRequest) {
     if (ambiguityNote) {
       warning += ambiguityNote;
     }
+    if (!hasSearch) {
+      warning += warning ? " " : "";
+      warning += "No search API — used model knowledge only.";
+    }
 
     return NextResponse.json({
       contact,
@@ -236,9 +299,16 @@ export async function POST(request: NextRequest) {
       flagged,
       warning: warning.trim(),
       model_used: emailModel,
+      debug: {
+        searchProvider: researchStats.provider,
+        queriesRun: researchStats.queriesRun,
+        resultsFound: researchStats.totalResults,
+        searchFailed: !researchStats.hasRealResults && hasSearchConfigured(),
+        mode,
+      },
     });
   } catch (e) {
-    console.error("Process error:", e);
+    console.error("[process] Error:", e);
     return NextResponse.json(
       { error: String(e) },
       { status: 500 }
