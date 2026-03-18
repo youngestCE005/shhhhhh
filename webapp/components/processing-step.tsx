@@ -60,6 +60,7 @@ export default function ProcessingStep({ contacts, modelTier, onComplete, onBack
             review_status: "pending",
             model_used: data.model_used,
             debug: data.debug,
+            critique: data.critique,
           };
 
           allResults.push(result);

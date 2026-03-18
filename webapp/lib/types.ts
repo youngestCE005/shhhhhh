@@ -72,6 +72,16 @@ export interface ProcessedResult {
     searchFailed: boolean;
     mode: "search-grounded" | "knowledge-assisted";
   };
+  critique?: {
+    overall: number;
+    specificity: number;
+    voice: number;
+    connection: number;
+    brevity: number;
+    ask: number;
+    hard_fails: string[];
+    was_rewritten: boolean;
+  };
 }
 
 export interface ExportRow {

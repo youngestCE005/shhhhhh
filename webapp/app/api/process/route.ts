@@ -11,7 +11,12 @@ import {
   researchUserPrompt,
   EMAIL_SYSTEM,
   emailUserPrompt,
+  CRITIQUE_SYSTEM,
+  critiqueUserPrompt,
+  REWRITE_SYSTEM,
+  rewriteUserPrompt,
 } from "@/lib/prompts";
+import { rankAngles } from "@/lib/style-guide";
 import { generateSearchQueries } from "@/lib/parse-input";
 import type {
   SparseInput,
@@ -31,13 +36,14 @@ const MODELS = {
   opus: "claude-opus-4-20250514",
 } as const;
 
-function resolveModel(tier: ModelTier, phase: "enrich" | "research" | "email", context?: {
+function resolveModel(tier: ModelTier, phase: "enrich" | "research" | "email" | "critique", context?: {
   identityConfidence?: number;
   researchConfidence?: number;
   highPriority?: boolean;
 }): string {
   if (tier === "sonnet") return MODELS.sonnet;
   if (tier === "opus") return MODELS.opus;
+  // Auto mode: escalate only when needed
   if (phase === "email" && context) {
     const shouldEscalate =
       context.highPriority ||
@@ -45,6 +51,7 @@ function resolveModel(tier: ModelTier, phase: "enrich" | "research" | "email", c
       (context.researchConfidence !== undefined && context.researchConfidence < 0.5);
     if (shouldEscalate) return MODELS.opus;
   }
+  // Critique always uses Sonnet (fast, cheap)
   return MODELS.sonnet;
 }
 
@@ -105,7 +112,6 @@ async function doSearch(queries: string[]): Promise<{ text: string; stats: Searc
     errors: [],
   };
 
-  // Skip search entirely if no provider configured
   if (!hasSearchConfigured()) {
     console.log(`[search] No search API configured. Skipping ${queries.length} queries.`);
     return { text: "", stats };
@@ -186,7 +192,6 @@ export async function POST(request: NextRequest) {
     console.log(`[enrich] model=${enrichModel} identity_confidence=${identityConfidence} name="${contact.full_name}" role="${contact.role}" company="${contact.company}"`);
 
     // --- Phase 3: Research ---
-    // Run additional search with enriched info (only if search is available)
     let allSearchResults = searchResults;
     let researchStats = searchStats;
 
@@ -212,7 +217,6 @@ export async function POST(request: NextRequest) {
       if (moreResults) {
         allSearchResults = searchResults + "\n" + moreResults;
       }
-      // Merge stats
       researchStats = {
         ...searchStats,
         queriesRun: searchStats.queriesRun + moreStats.queriesRun,
@@ -243,6 +247,28 @@ export async function POST(request: NextRequest) {
       confidence_score: Number(researchData?.confidence_score ?? 0.3),
     };
 
+    // --- Angle intelligence: cross-check LLM's choice with keyword matching ---
+    const usableFacts = brief.specific_facts.filter(
+      (f) => !f.toUpperCase().includes("INSUFFICIENT")
+    );
+    const angleRanking = rankAngles({
+      role: contact.role,
+      company: contact.company,
+      facts: usableFacts,
+      bio: bioSummary,
+    });
+
+    // If the LLM's chosen angle scores poorly and there's a much better match, override
+    const llmAngleScore =
+      angleRanking.find((a) => a.angle === brief.background_emphasis)?.score ?? 0;
+    const bestAngle = angleRanking[0];
+    if (bestAngle.score > 0.5 && bestAngle.score - llmAngleScore > 0.3) {
+      console.log(
+        `[angle] Overriding LLM choice "${brief.background_emphasis}" (${llmAngleScore.toFixed(2)}) → "${bestAngle.angle}" (${bestAngle.score.toFixed(2)})`
+      );
+      brief.background_emphasis = bestAngle.angle as AngleCategory;
+    }
+
     console.log(`[research] model=${researchModel} confidence=${brief.confidence_score} facts=${brief.specific_facts.length} angle="${brief.background_emphasis}"`);
 
     // --- Phase 4: Generate email ---
@@ -261,14 +287,72 @@ export async function POST(request: NextRequest) {
     );
 
     const emailData = parseJSON(emailRaw);
-    const draft: EmailDraft = {
-      subject_lines: ((emailData?.subject_lines as string[]) || []).slice(0, 3),
-      body: (emailData?.body as string) || "[Generation failed]",
-      angle_used: brief.background_emphasis,
-      sender_details_used: (emailData?.sender_details_used as string[]) || [],
-    };
+    let emailBody = (emailData?.body as string) || "[Generation failed]";
+    const subjectLines = ((emailData?.subject_lines as string[]) || []).slice(0, 3);
+    const senderDetailsUsed = (emailData?.sender_details_used as string[]) || [];
 
-    console.log(`[email] model=${emailModel} done for "${contact.full_name}"`);
+    console.log(`[email] model=${emailModel} generated for "${contact.full_name}"`);
+
+    // --- Phase 5: Self-critique + optional rewrite ---
+    let critiqueResult = null;
+    let wasRewritten = false;
+
+    if (emailBody !== "[Generation failed]") {
+      const critiqueModel = resolveModel(tier, "critique");
+      const critiqueRaw = await callClaude(
+        client,
+        critiqueModel,
+        CRITIQUE_SYSTEM,
+        critiqueUserPrompt(contact.full_name, contact.role, emailBody, usableFacts),
+        400
+      );
+
+      critiqueResult = parseJSON(critiqueRaw);
+
+      if (critiqueResult) {
+        const overall = Number(critiqueResult.overall ?? 5);
+        const hardFails = (critiqueResult.hard_fails as string[]) || [];
+
+        console.log(
+          `[critique] overall=${overall} hard_fails=${hardFails.length} suggestion="${critiqueResult.suggestion || "none"}"`
+        );
+
+        // Rewrite if score is below 3.5 or there are hard fails
+        if (overall < 3.5 || hardFails.length > 0) {
+          console.log(`[rewrite] Triggering rewrite (score=${overall}, fails=${hardFails.length})`);
+
+          const rewriteRaw = await callClaude(
+            client,
+            emailModel, // same model as email generation
+            REWRITE_SYSTEM,
+            rewriteUserPrompt(
+              emailBody,
+              {
+                hard_fails: hardFails,
+                suggestion: (critiqueResult.suggestion as string) || "",
+                overall,
+              },
+              contact.full_name,
+              usableFacts
+            ),
+            500
+          );
+
+          if (rewriteRaw.trim()) {
+            emailBody = rewriteRaw.trim();
+            wasRewritten = true;
+            console.log(`[rewrite] Done — email rewritten for "${contact.full_name}"`);
+          }
+        }
+      }
+    }
+
+    const draft: EmailDraft = {
+      subject_lines: subjectLines,
+      body: emailBody,
+      angle_used: brief.background_emphasis,
+      sender_details_used: senderDetailsUsed,
+    };
 
     // --- Build flags ---
     let flagged = false;
@@ -306,6 +390,18 @@ export async function POST(request: NextRequest) {
         searchFailed: !researchStats.hasRealResults && hasSearchConfigured(),
         mode,
       },
+      critique: critiqueResult
+        ? {
+            overall: Number(critiqueResult.overall ?? 0),
+            specificity: Number(critiqueResult.specificity ?? 0),
+            voice: Number(critiqueResult.voice ?? 0),
+            connection: Number(critiqueResult.connection ?? 0),
+            brevity: Number(critiqueResult.brevity ?? 0),
+            ask: Number(critiqueResult.ask ?? 0),
+            hard_fails: (critiqueResult.hard_fails as string[]) || [],
+            was_rewritten: wasRewritten,
+          }
+        : undefined,
     });
   } catch (e) {
     console.error("[process] Error:", e);

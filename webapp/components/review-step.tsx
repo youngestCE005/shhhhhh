@@ -186,6 +186,36 @@ function RecipientCard({
         </div>
       )}
 
+      {/* Quality score */}
+      {r.critique && (
+        <div className="mb-4 flex items-center gap-3 text-xs">
+          <span
+            className={`font-semibold px-2 py-0.5 rounded-full ${
+              r.critique.overall >= 4
+                ? "bg-green-50 text-green-700"
+                : r.critique.overall >= 3
+                ? "bg-amber-50 text-amber-700"
+                : "bg-red-50 text-red-700"
+            }`}
+          >
+            Quality: {r.critique.overall.toFixed(1)}/5
+          </span>
+          {r.critique.was_rewritten && (
+            <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 font-medium">
+              Auto-improved
+            </span>
+          )}
+          <span className="text-gray-400">
+            S:{r.critique.specificity} V:{r.critique.voice} C:{r.critique.connection} B:{r.critique.brevity} A:{r.critique.ask}
+          </span>
+          {r.critique.hard_fails.length > 0 && (
+            <span className="text-red-500">
+              {r.critique.hard_fails.length} issue{r.critique.hard_fails.length > 1 ? "s" : ""} found
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Email body */}
       {editing ? (
         <div className="mb-4">

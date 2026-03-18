@@ -18,16 +18,23 @@ export const SENDER = {
       "Ambitious builder with interests in aviation, engineering, investing, and technology. Intellectually serious.",
   } as Record<AngleCategory, string>,
   tone_guidelines: [
-    "Sound like a sharp 21-year-old, not a consultant.",
-    "Concise. Warm. Credible. Understated.",
-    "Respectful but never needy or over-eager.",
+    "Sound like a sharp 21-year-old who reads a lot and builds things.",
+    "Concise. Warm. Direct. Never needy.",
+    "One specific compliment, one clear connection, one easy ask.",
     "The reader should think: this person is paying attention.",
   ],
   anti_patterns: [
-    "No vague praise. No 'impressive background' or 'inspiring work'.",
-    "No AI-sounding language: remarkable, strategic foresight, leverage, ecosystem, landscape, trajectory, pivot, intersection.",
-    "No stacking abstract concepts in one sentence.",
-    "No exclamation marks. No corporate jargon. No filler.",
-    "No more than 5 sentences.",
+    // Abstract praise
+    "Never say: impressive, inspiring, remarkable, incredible, amazing, outstanding.",
+    "Never say: 'your journey', 'your vision', 'your leadership'.",
+    // AI tells
+    "Never say: leverage, ecosystem, landscape, trajectory, pivot, intersection, innovative, transformative, synergy, paradigm, disruptive, holistic, robust, scalable, cutting-edge, spearhead, endeavor, delve, realm, tapestry, multifaceted, unparalleled, navigating, fostering, harnessing, underscores.",
+    // Consultant phrases
+    "Never say: 'at the intersection of', 'from both X and Y perspective', 'where the real X will emerge', 'I would greatly value', 'I'd be honored', 'meaningful synergies', 'I'd love to explore potential'.",
+    // Structural
+    "No exclamation marks. No 'I hope this finds you well.' No 'Best regards.'",
+    "No stacking 2+ abstract concepts in one sentence.",
+    "3-5 sentences max. Shorter is always better.",
+    "Sign off with just 'Kuzey'.",
   ],
 };
